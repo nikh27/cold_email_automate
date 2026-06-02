@@ -126,17 +126,15 @@ def health():
 @app.route("/api/debug-config")
 def debug_config():
     """Shows what credentials the server has loaded — for troubleshooting only."""
-    pwd = config.SMTP_PASSWORD
+    pwd = config.GMAIL_APP_PASSWORD
     return jsonify({
-        "sender_email":    config.SENDER_EMAIL,
-        "smtp_host":       config.SMTP_HOST,
-        "smtp_port":       config.SMTP_PORT,
-        "smtp_user":       config.SMTP_USER,
-        "password_length": len(pwd),
-        "password_set":    len(pwd) > 5,
-        "password_preview":pwd[:4] + "…" if pwd else "EMPTY",
-        "env_file_exists": os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")),
-        "daily_limit":     config.DAILY_LIMIT,
+        "gmail_user":       config.GMAIL_USER,
+        "password_length":  len(pwd),
+        "password_set":     len(pwd) > 5,
+        "password_preview": pwd[:4] + "…" if pwd else "EMPTY",
+        "env_file":         os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+        "env_file_exists":  os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")),
+        "daily_limit":      config.DAILY_LIMIT,
     })
 
 
