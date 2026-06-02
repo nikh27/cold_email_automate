@@ -1,0 +1,20 @@
+# ─── Secrets (NEVER commit these) ─────────────────────────────
+.env
+
+# ─── Auto-generated at runtime (Render creates these itself) ──
+email_tracker.db
+resume.pdf
+
+# ─── Python cache ─────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# ─── OS junk ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

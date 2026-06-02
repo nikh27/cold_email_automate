@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: cold-email-soumya
+    env: python
+    region: singapore        # Closest to India
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 600"
+    envVars:
+      - key: GMAIL_USER
+        sync: false          # Enter manually in Render dashboard
+      - key: GMAIL_APP_PASSWORD
+        sync: false          # Enter manually in Render dashboard
+      - key: API_KEY
+        sync: false          # Enter manually in Render dashboard
+      - key: DAILY_LIMIT
+        value: "62"
+      - key: MORNING_BATCH_SIZE
+        value: "30"
+      - key: EVENING_BATCH_SIZE
+        value: "32"
+      - key: MIN_DELAY
+        value: "90"
+      - key: MAX_DELAY
+        value: "240"
+      - key: SECRET_KEY
+        generateValue: true
