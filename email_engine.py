@@ -88,7 +88,7 @@ def download_resume() -> bool:
 
 def _build_message(to_email: str, subject: str, body: str) -> MIMEMultipart:
     msg = MIMEMultipart()
-    msg["From"]    = f"{config.SENDER_NAME} <{config.GMAIL_USER}>"
+    msg["From"]    = f"{config.SENDER_NAME} <{config.SENDER_EMAIL}>"
     msg["To"]      = to_email
     msg["Subject"] = subject
 
@@ -123,22 +123,22 @@ def send_single_email(contact: dict) -> tuple:
     try:
         msg = _build_message(contact["email"], subject, body)
 
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+        with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=30) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
-            server.login(config.GMAIL_USER, config.GMAIL_APP_PASSWORD)
+            server.login(config.SMTP_USER, config.SMTP_PASSWORD)
             server.send_message(msg)
 
         logger.info(
-            f"✅ Sent → {contact['email']} | {contact.get('company','')} | Template {template_index}"
+            f"✅ Sent → {contact['email']} | {contact.get('company','')} | Template {template_index} | via {config.SMTP_HOST}"
         )
         return True, None, template_index
 
     except smtplib.SMTPRecipientsRefused:
         return False, "Invalid email address (refused by server)", template_index
     except smtplib.SMTPAuthenticationError:
-        return False, "Gmail authentication failed — check App Password in env", template_index
+        return False, f"SMTP auth failed for {config.SMTP_USER} on {config.SMTP_HOST} — check credentials", template_index
     except smtplib.SMTPException as exc:
         return False, f"SMTP error: {exc}", template_index
     except Exception as exc:
