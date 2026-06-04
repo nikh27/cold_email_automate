@@ -72,18 +72,21 @@ IST = pytz.timezone("Asia/Kolkata")
 def start_node_mailer():
     """Launch the Node.js mailer microservice as a background subprocess."""
     try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         proc = subprocess.Popen(
             ["node", "mailer.js"],
+            cwd=script_dir,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.PIPE
         )
-        time.sleep(2)  # Give Node.js 2 seconds to start
+        time.sleep(3)  # Give Node.js 3 seconds to start
         if proc.poll() is None:
             logger.info(f"📮 Node.js mailer started successfully (PID: {proc.pid})")
         else:
-            logger.error("❌ Node.js mailer exited immediately — check node/npm install")
+            out, err = proc.communicate()
+            logger.error(f"❌ Node.js mailer exited. STDOUT: {out.decode()[:300]} | STDERR: {err.decode()[:300]}")
     except FileNotFoundError:
-        logger.error("❌ 'node' not found — Node.js not installed on this server")
+        logger.error("❌ 'node' command not found — Node.js not installed")
     except Exception as exc:
         logger.error(f"❌ Failed to start Node.js mailer: {exc}")
 
