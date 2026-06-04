@@ -20,6 +20,8 @@ Endpoints:
 import os
 import logging
 import collections
+import subprocess
+import time
 from datetime import datetime
 
 import pytz
@@ -67,8 +69,28 @@ IST = pytz.timezone("Asia/Kolkata")
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
+def start_node_mailer():
+    """Launch the Node.js mailer microservice as a background subprocess."""
+    try:
+        proc = subprocess.Popen(
+            ["node", "mailer.js"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
+        time.sleep(2)  # Give Node.js 2 seconds to start
+        if proc.poll() is None:
+            logger.info(f"📮 Node.js mailer started successfully (PID: {proc.pid})")
+        else:
+            logger.error("❌ Node.js mailer exited immediately — check node/npm install")
+    except FileNotFoundError:
+        logger.error("❌ 'node' not found — Node.js not installed on this server")
+    except Exception as exc:
+        logger.error(f"❌ Failed to start Node.js mailer: {exc}")
+
+
 def startup():
     logger.info("🚀 Cold Email System — Starting up …")
+    start_node_mailer()  # Start Node.js mailer first
     db.initialize_db()
     engine.download_resume()
     stats = db.get_stats()
