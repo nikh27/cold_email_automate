@@ -253,6 +253,18 @@ def get_today_sent_count() -> int:
     return count
 
 
+def get_contact_by_id(contact_id: int) -> dict | None:
+    """Fetch a single contact by its ID. Returns None if not found."""
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT id, name, email, title, company, status, retry_count, error_msg
+           FROM contacts WHERE id = ?""",
+        (contact_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 # ── Write Operations ────────────────────────────────────────────────────────
 
 def mark_sent(contact_id: int, template_used: int):

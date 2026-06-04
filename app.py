@@ -3,7 +3,7 @@ app.py — Flask web application + APScheduler background jobs.
 
 Endpoints:
   GET  /                         → Dashboard (HTML)
-  GET  /health                   → Keep-alive for Upstash (JSON)
+  GET  /health                   → Keep-alive ping (JSON)
   GET  /api/stats                → Aggregate stats (JSON)
   GET  /api/contacts             → Paginated contacts (?page&limit&status&search)
   GET  /api/daily-stats          → Daily send counts for chart (?days=14)
@@ -12,7 +12,8 @@ Endpoints:
   GET  /api/logs                 → Last 200 live log lines (JSON)
   POST /api/send-batch           → Trigger batch (?type=morning|evening)
   POST /api/toggle-pause         → Pause / resume
-  POST /api/test                 → Send 3 test emails to yourself
+  POST /api/test                 → Send test email to a custom address
+  POST /api/send-one             → Manually send to one contact by ID
   POST /api/settings             → Update daily limit / delays
   GET  /api/settings             → Get current settings
 """
@@ -20,8 +21,6 @@ Endpoints:
 import os
 import logging
 import collections
-import subprocess
-import time
 from datetime import datetime
 
 import pytz
@@ -69,50 +68,8 @@ IST = pytz.timezone("Asia/Kolkata")
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
-def start_node_mailer():
-    """Launch the Node.js mailer microservice as a background subprocess."""
-    try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Auto-install npm packages if node_modules missing
-        node_modules = os.path.join(script_dir, "node_modules")
-        if not os.path.exists(node_modules):
-            logger.info("📦 node_modules not found — running npm install...")
-            install = subprocess.run(
-                ["npm", "install"],
-                cwd=script_dir,
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-            if install.returncode == 0:
-                logger.info("✅ npm install completed successfully")
-            else:
-                logger.error(f"❌ npm install failed: {install.stderr[:300]}")
-                return
-
-        # Start the mailer
-        proc = subprocess.Popen(
-            ["node", "mailer.js"],
-            cwd=script_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        time.sleep(3)
-        if proc.poll() is None:
-            logger.info(f"📮 Node.js mailer started successfully (PID: {proc.pid})")
-        else:
-            out, err = proc.communicate()
-            logger.error(f"❌ Node.js mailer exited. STDERR: {err.decode()[:300]}")
-    except FileNotFoundError:
-        logger.error("❌ 'node' or 'npm' not found — Node.js not installed")
-    except Exception as exc:
-        logger.error(f"❌ Failed to start Node.js mailer: {exc}")
-
-
 def startup():
     logger.info("🚀 Cold Email System — Starting up …")
-    start_node_mailer()  # Start Node.js mailer first
     db.initialize_db()
     engine.download_resume()
     stats = db.get_stats()
@@ -120,6 +77,7 @@ def startup():
         f"📊 Status: {stats['sent']} sent | {stats['pending']} pending | "
         f"{stats['failed']} failed | {stats['progress']}% complete"
     )
+    logger.info(f"📮 SMTP relay: {config.SMTP_HOST}:{config.SMTP_PORT} → From: {config.SENDER_EMAIL}")
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
@@ -169,16 +127,15 @@ def health():
 
 @app.route("/api/debug-config")
 def debug_config():
-    """Shows what credentials the server has loaded — for troubleshooting only."""
-    pwd = config.GMAIL_APP_PASSWORD
+    pwd = config.SMTP_PASSWORD
     return jsonify({
-        "gmail_user":       config.GMAIL_USER,
-        "password_length":  len(pwd),
-        "password_set":     len(pwd) > 5,
+        "sender_email":    config.SENDER_EMAIL,
+        "smtp_host":       config.SMTP_HOST,
+        "smtp_port":       config.SMTP_PORT,
+        "smtp_user":       config.SMTP_USER,
+        "password_set":    len(pwd) > 5,
         "password_preview": pwd[:4] + "…" if pwd else "EMPTY",
-        "env_file":         os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
-        "env_file_exists":  os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")),
-        "daily_limit":      config.DAILY_LIMIT,
+        "daily_limit":     config.DAILY_LIMIT,
     })
 
 
@@ -232,15 +189,16 @@ def api_logs():
 @app.route("/api/settings", methods=["GET"])
 def api_settings_get():
     return jsonify({
-        "daily_limit":         config.DAILY_LIMIT,
-        "morning_batch_size":  config.MORNING_BATCH_SIZE,
-        "evening_batch_size":  config.EVENING_BATCH_SIZE,
-        "min_delay":           config.MIN_DELAY_SECONDS,
-        "max_delay":           config.MAX_DELAY_SECONDS,
-        "gmail_user":          config.GMAIL_USER,
-        "resume_present":      os.path.exists(config.RESUME_FILE),
-        "resume_size_kb":      (os.path.getsize(config.RESUME_FILE) // 1024
-                                if os.path.exists(config.RESUME_FILE) else 0),
+        "daily_limit":        config.DAILY_LIMIT,
+        "morning_batch_size": config.MORNING_BATCH_SIZE,
+        "evening_batch_size": config.EVENING_BATCH_SIZE,
+        "min_delay":          config.MIN_DELAY_SECONDS,
+        "max_delay":          config.MAX_DELAY_SECONDS,
+        "sender_email":       config.SENDER_EMAIL,
+        "smtp_host":          config.SMTP_HOST,
+        "resume_present":     os.path.exists(config.RESUME_FILE),
+        "resume_size_kb":     (os.path.getsize(config.RESUME_FILE) // 1024
+                               if os.path.exists(config.RESUME_FILE) else 0),
     })
 
 
@@ -248,25 +206,21 @@ def api_settings_get():
 def api_settings_post():
     data = request.json or {}
     changed = []
-
     if "daily_limit" in data:
         val = int(data["daily_limit"])
         if 10 <= val <= 200:
             config.DAILY_LIMIT = val
             changed.append(f"daily_limit={val}")
-
     if "min_delay" in data:
         val = int(data["min_delay"])
         if 30 <= val <= 600:
             config.MIN_DELAY_SECONDS = val
             changed.append(f"min_delay={val}")
-
     if "max_delay" in data:
         val = int(data["max_delay"])
         if 60 <= val <= 900:
             config.MAX_DELAY_SECONDS = val
             changed.append(f"max_delay={val}")
-
     if changed:
         logger.info(f"⚙️ Settings updated: {', '.join(changed)}")
         return jsonify({"status": "ok", "changed": changed})
@@ -289,7 +243,6 @@ def toggle_pause():
     db.set_paused(not paused)
     action = "resumed" if paused else "paused"
     logger.info(f"📌 Sending {action}.")
-    # Support both AJAX and form POST
     if request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.is_json:
         return jsonify({"paused": not paused})
     return redirect(url_for("dashboard"))
@@ -297,27 +250,74 @@ def toggle_pause():
 
 @app.route("/api/test", methods=["POST"])
 def api_test():
-    if not config.GMAIL_USER:
-        return jsonify({"error": "GMAIL_USER not configured"}), 400
-    test_contacts = [
-        {"id": 9001, "name": "Soumya Kumari", "email": config.GMAIL_USER,
-         "title": "Head of HR", "company": "TestCorp Alpha"},
-        {"id": 9002, "name": "Soumya Kumari", "email": config.GMAIL_USER,
-         "title": "Chief People Officer", "company": "TestCorp Beta"},
-        {"id": 9003, "name": "Soumya Kumari", "email": config.GMAIL_USER,
-         "title": "Talent Acquisition Lead", "company": "TestCorp Gamma"},
-    ]
-    results = []
-    for contact in test_contacts:
-        ok, err, tmpl = engine.send_single_email(contact)
-        results.append({"company": contact["company"], "success": ok,
-                        "template": tmpl, "error": err})
-    return jsonify({"status": "done", "results": results})
+    """Send 1 test email to a user-specified address."""
+    data       = request.json or {}
+    test_email = data.get("email", "").strip() or config.SENDER_EMAIL
+
+    if not config.SMTP_USER or not config.SMTP_PASSWORD:
+        return jsonify({"error": "SMTP credentials not configured"}), 400
+
+    if not test_email:
+        return jsonify({"error": "No email address provided"}), 400
+
+    contact = {
+        "id":      9001,
+        "name":    "Test HR",
+        "email":   test_email,
+        "title":   "Head of HR",
+        "company": "TestCorp",
+    }
+    ok, err, tmpl = engine.send_single_email(contact)
+    return jsonify({
+        "status":   "done",
+        "success":  ok,
+        "to":       test_email,
+        "template": tmpl,
+        "error":    err,
+    })
+
+
+@app.route("/api/send-one", methods=["POST"])
+def api_send_one():
+    """
+    Manually send email to one contact by ID.
+    Only allowed if contact status is 'pending' or 'failed'.
+    Skips contacts that are already 'sent'.
+    """
+    data       = request.json or {}
+    contact_id = data.get("id")
+
+    if not contact_id:
+        return jsonify({"error": "Missing contact id"}), 400
+
+    # Fetch contact from DB
+    contact = db.get_contact_by_id(int(contact_id))
+    if not contact:
+        return jsonify({"error": "Contact not found"}), 404
+
+    # Block re-sending to already sent contacts
+    if contact.get("status") == "sent":
+        return jsonify({
+            "error":   "Already sent to this contact",
+            "skipped": True,
+            "status":  "sent",
+        }), 400
+
+    logger.info(f"📤 Manual send → {contact['email']} ({contact.get('company','')})")
+    ok, err, tmpl = engine.send_single_email(contact)
+
+    if ok:
+        db.mark_sent(contact["id"], tmpl)
+        logger.info(f"✅ Manual send success → {contact['email']}")
+        return jsonify({"success": True, "email": contact["email"], "template": tmpl})
+    else:
+        db.mark_failed(contact["id"], err)
+        logger.warning(f"❌ Manual send failed → {contact['email']}: {err}")
+        return jsonify({"success": False, "email": contact["email"], "error": err})
 
 
 @app.route("/api/templates")
 def api_templates():
-    """Return all 5 email templates for preview in the dashboard."""
     names = ["Direct & Confident", "Value Focused", "Story-Based",
              "Short & Punchy", "Confident Fresher"]
     templates = []
