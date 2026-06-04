@@ -251,7 +251,7 @@ def toggle_pause():
 @app.route("/api/test", methods=["POST"])
 def api_test():
     """Send 1 test email to a user-specified address."""
-    data       = request.json or {}
+    data       = request.get_json(force=True, silent=True) or {}
     test_email = data.get("email", "").strip() or config.SENDER_EMAIL
 
     if not config.SMTP_USER or not config.SMTP_PASSWORD:
@@ -284,7 +284,7 @@ def api_send_one():
     Only allowed if contact status is 'pending' or 'failed'.
     Skips contacts that are already 'sent'.
     """
-    data       = request.json or {}
+    data       = request.get_json(force=True, silent=True) or {}
     contact_id = data.get("id")
 
     if not contact_id:
