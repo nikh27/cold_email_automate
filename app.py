@@ -24,7 +24,7 @@ import collections
 from datetime import datetime
 
 import pytz
-from flask import Flask, render_template, jsonify, request, redirect, url_for
+from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -104,7 +104,51 @@ def _verify_api_key() -> bool:
     return provided == config.API_KEY
 
 
+@app.before_request
+def check_auth():
+    if not config.APP_PASSWORD:
+        return
+
+    # Allow health checks and static files
+    if request.path.startswith("/health") or request.path.startswith("/static"):
+        return
+        
+    # Allow login route itself
+    if request.path == "/login":
+        return
+
+    # If not authenticated, block request
+    if not session.get("authenticated"):
+        if request.path.startswith("/api/"):
+            # if API request doesn't have session, check API_KEY
+            if not _verify_api_key():
+                return jsonify({"error": "Unauthorized. Please login."}), 401
+        else:
+            return redirect(url_for("login"))
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not config.APP_PASSWORD:
+        return redirect(url_for("dashboard"))
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        if password == config.APP_PASSWORD:
+            session["authenticated"] = True
+            return redirect(url_for("dashboard"))
+        return render_template("login.html", error="Incorrect password")
+        
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 
 @app.route("/")
 def dashboard():

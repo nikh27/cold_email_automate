@@ -50,5 +50,6 @@ RESUME_FILE   = os.environ.get("RESUME_FILE", "resume.pdf")
 RESUME_DRIVE_ID = "1YYsVNprr4NMfnXRl68Iq3tQ8DyO2VvON"
 
 # ── Security ────────────────────────────────────────────────────────────────
-SECRET_KEY = os.environ.get("SECRET_KEY", "cold-email-soumya-2026")
-API_KEY    = os.environ.get("API_KEY", "")
+SECRET_KEY   = os.environ.get("SECRET_KEY", "cold-email-soumya-2026")
+API_KEY      = os.environ.get("API_KEY", "")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "soumya2026")
