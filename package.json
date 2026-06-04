@@ -1,0 +1,13 @@
+{
+  "name": "cold-email-mailer",
+  "version": "1.0.0",
+  "description": "Node.js mailer microservice for cold email system",
+  "main": "mailer.js",
+  "scripts": {
+    "start": "node mailer.js"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.9",
+    "express": "^4.18.2"
+  }
+}

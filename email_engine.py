@@ -124,7 +124,7 @@ def _build_message(to_email: str, subject: str, body: str) -> MIMEMultipart:
 
 def send_single_email(contact: dict) -> tuple:
     """
-    Attempt to send email to one contact.
+    Attempt to send email to one contact via Node.js mailer service.
     Returns (success: bool, error_msg: str | None, template_index: int)
     """
     content        = get_email_content(contact)
@@ -133,28 +133,35 @@ def send_single_email(contact: dict) -> tuple:
     template_index = content["template_index"]
 
     try:
-        msg = _build_message(contact["email"], subject, body)
+        payload = {
+            "to":          contact["email"],
+            "subject":     subject,
+            "body":        body,
+            "resume_path": os.path.abspath(config.RESUME_FILE) if os.path.exists(config.RESUME_FILE) else None
+        }
 
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(config.GMAIL_USER, config.GMAIL_APP_PASSWORD)
-            server.send_message(msg)
+        # Call the Node.js mailer microservice (same machine, port 3001)
+        mailer_url = os.environ.get("MAILER_URL", "http://127.0.0.1:3001")
+        response   = requests.post(f"{mailer_url}/send", json=payload, timeout=30)
+        result     = response.json()
 
-        logger.info(
-            f"✅ Sent → {contact['email']} | {contact.get('company','')} | Template {template_index}"
-        )
-        return True, None, template_index
+        if result.get("success"):
+            logger.info(
+                f"✅ Sent → {contact['email']} | {contact.get('company','')} | Template {template_index}"
+            )
+            return True, None, template_index
+        else:
+            error = result.get("error", "Unknown error from mailer")
+            logger.warning(f"❌ Mailer error: {error}")
+            return False, error, template_index
 
-    except smtplib.SMTPRecipientsRefused:
-        return False, "Invalid email address (refused by server)", template_index
-    except smtplib.SMTPAuthenticationError:
-        return False, "Gmail authentication failed — check App Password in env", template_index
-    except smtplib.SMTPException as exc:
-        return False, f"SMTP error: {exc}", template_index
+    except requests.exceptions.ConnectionError:
+        return False, "Node.js mailer not running on port 3001", template_index
+    except requests.exceptions.Timeout:
+        return False, "Mailer request timed out", template_index
     except Exception as exc:
         return False, f"Unexpected error: {exc}", template_index
+
 
 
 # ── Batch Sender ─────────────────────────────────────────────────────────────
