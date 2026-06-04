@@ -14,12 +14,24 @@ import time
 import random
 import logging
 import smtplib
+import socket
 import threading
 import requests
 from email.mime.multipart import MIMEMultipart
 from email.mime.text      import MIMEText
 from email.mime.base      import MIMEBase
 from email                import encoders
+
+# ── Force IPv4 globally ──────────────────────────────────────────────────────
+# Python tries IPv6 first by default. Render/Railway free servers don't support
+# IPv6 routing → causes [Errno 101] Network is unreachable.
+# This patch forces all socket connections to use IPv4 only (same as Node.js).
+_orig_getaddrinfo = socket.getaddrinfo
+def _ipv4_only_getaddrinfo(*args, **kwargs):
+    results = _orig_getaddrinfo(*args, **kwargs)
+    ipv4 = [r for r in results if r[0] == socket.AF_INET]
+    return ipv4 if ipv4 else results  # fallback to original if no IPv4
+socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 import config
 import database as db
