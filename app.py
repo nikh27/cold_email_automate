@@ -73,20 +73,39 @@ def start_node_mailer():
     """Launch the Node.js mailer microservice as a background subprocess."""
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Auto-install npm packages if node_modules missing
+        node_modules = os.path.join(script_dir, "node_modules")
+        if not os.path.exists(node_modules):
+            logger.info("📦 node_modules not found — running npm install...")
+            install = subprocess.run(
+                ["npm", "install"],
+                cwd=script_dir,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            if install.returncode == 0:
+                logger.info("✅ npm install completed successfully")
+            else:
+                logger.error(f"❌ npm install failed: {install.stderr[:300]}")
+                return
+
+        # Start the mailer
         proc = subprocess.Popen(
             ["node", "mailer.js"],
             cwd=script_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        time.sleep(3)  # Give Node.js 3 seconds to start
+        time.sleep(3)
         if proc.poll() is None:
             logger.info(f"📮 Node.js mailer started successfully (PID: {proc.pid})")
         else:
             out, err = proc.communicate()
-            logger.error(f"❌ Node.js mailer exited. STDOUT: {out.decode()[:300]} | STDERR: {err.decode()[:300]}")
+            logger.error(f"❌ Node.js mailer exited. STDERR: {err.decode()[:300]}")
     except FileNotFoundError:
-        logger.error("❌ 'node' command not found — Node.js not installed")
+        logger.error("❌ 'node' or 'npm' not found — Node.js not installed")
     except Exception as exc:
         logger.error(f"❌ Failed to start Node.js mailer: {exc}")
 
