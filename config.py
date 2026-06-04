@@ -19,15 +19,17 @@ SENDER_NAME   = "Soumya Kumari"
 SENDER_EMAIL  = os.environ.get("SENDER_EMAIL",
                   os.environ.get("GMAIL_USER", "soumya8969@gmail.com"))
 
-# ── SMTP relay settings ─────────────────────────────────────────────────────
-# Brevo (cloud): SMTP_HOST=smtp-relay.brevo.com, SMTP_USER=ad46bf001@smtp-brevo.com
-# Gmail (local): SMTP_HOST=smtp.gmail.com, SMTP_USER=soumya8969@gmail.com
+# ── SMTP relay settings (kept for local use only) ───────────────────────────
 SMTP_HOST     = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.environ.get("SMTP_PORT", 587))
 SMTP_USER     = os.environ.get("SMTP_USER",
                   os.environ.get("GMAIL_USER", ""))
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD",
                   os.environ.get("GMAIL_APP_PASSWORD", ""))
+
+# ── Brevo HTTP API (used on cloud — HTTPS port 443, never blocked) ───────────
+# Get from: Brevo → SMTP & API → API keys & MCP tab → Create API key
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
 
 # ── Legacy aliases (backward compatibility) ─────────────────────────────────
 GMAIL_USER         = SENDER_EMAIL

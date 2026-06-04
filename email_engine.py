@@ -1,37 +1,23 @@
 """
-email_engine.py — Core sending logic.
+email_engine.py — Core sending logic using Brevo HTTP API.
+
+Uses Brevo's REST API (HTTPS port 443) instead of SMTP.
+HTTPS is NEVER blocked by cloud providers — works on Render, Railway, etc.
 
 Key behaviours:
   1. Downloads resume from Google Drive if resume.pdf is missing.
-  2. Sends one email via Gmail SMTP with TLS.
-  3. Attaches resume.pdf to every email.
-  4. send_batch() respects daily limits and random human delays.
-  5. send_batch() runs safely in a background thread (non-blocking for Flask).
+  2. Sends email via Brevo HTTP API with resume attached as base64.
+  3. send_batch() respects daily limits and random human delays.
+  4. send_batch() runs safely in a background thread (non-blocking).
 """
 
 import os
 import time
+import base64
 import random
 import logging
-import smtplib
-import socket
 import threading
 import requests
-from email.mime.multipart import MIMEMultipart
-from email.mime.text      import MIMEText
-from email.mime.base      import MIMEBase
-from email                import encoders
-
-# ── Force IPv4 globally ──────────────────────────────────────────────────────
-# Python tries IPv6 first by default. Render/Railway free servers don't support
-# IPv6 routing → causes [Errno 101] Network is unreachable.
-# This patch forces all socket connections to use IPv4 only (same as Node.js).
-_orig_getaddrinfo = socket.getaddrinfo
-def _ipv4_only_getaddrinfo(*args, **kwargs):
-    results = _orig_getaddrinfo(*args, **kwargs)
-    ipv4 = [r for r in results if r[0] == socket.AF_INET]
-    return ipv4 if ipv4 else results  # fallback to original if no IPv4
-socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 import config
 import database as db
@@ -60,11 +46,9 @@ def download_resume() -> bool:
     session  = requests.Session()
 
     try:
-        # First request — may return a scan warning page
         url      = f"https://drive.google.com/uc?export=download&id={drive_id}"
         response = session.get(url, stream=True, timeout=30)
 
-        # Look for the confirm token Google embeds in the cookie / response
         confirm_token = None
         for key, value in response.cookies.items():
             if "download_warning" in key:
@@ -96,35 +80,11 @@ def download_resume() -> bool:
         return False
 
 
-# ── Build MIME Message ───────────────────────────────────────────────────────
-
-def _build_message(to_email: str, subject: str, body: str) -> MIMEMultipart:
-    msg = MIMEMultipart()
-    msg["From"]    = f"{config.SENDER_NAME} <{config.GMAIL_USER}>"
-    msg["To"]      = to_email
-    msg["Subject"] = subject
-
-    msg.attach(MIMEText(body, "plain", "utf-8"))
-
-    if os.path.exists(config.RESUME_FILE):
-        with open(config.RESUME_FILE, "rb") as f:
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(f.read())
-        encoders.encode_base64(part)
-        part.add_header(
-            "Content-Disposition",
-            'attachment; filename="Soumya_Kumari_Resume.pdf"',
-        )
-        msg.attach(part)
-
-    return msg
-
-
-# ── Send One Email ───────────────────────────────────────────────────────────
+# ── Send One Email via Brevo HTTP API ────────────────────────────────────────
 
 def send_single_email(contact: dict) -> tuple:
     """
-    Send one email via SMTP relay (Brevo on cloud, Gmail locally).
+    Send one email via Brevo HTTP API (HTTPS port 443 — never blocked).
     Returns (success: bool, error_msg: str | None, template_index: int)
     """
     content        = get_email_content(contact)
@@ -132,31 +92,62 @@ def send_single_email(contact: dict) -> tuple:
     body           = content["body"]
     template_index = content["template_index"]
 
+    api_key = config.BREVO_API_KEY
+    if not api_key:
+        return False, "BREVO_API_KEY not set in environment", template_index
+
+    # Build payload
+    payload = {
+        "sender": {
+            "name":  config.SENDER_NAME,
+            "email": config.SENDER_EMAIL,
+        },
+        "to": [{
+            "email": contact["email"],
+            "name":  contact.get("name", "HR Manager"),
+        }],
+        "subject": subject,
+        "textContent": body,
+    }
+
+    # Attach resume if available
+    if os.path.exists(config.RESUME_FILE):
+        with open(config.RESUME_FILE, "rb") as f:
+            resume_b64 = base64.b64encode(f.read()).decode()
+        payload["attachment"] = [{
+            "content": resume_b64,
+            "name":    "Soumya_Kumari_Resume.pdf",
+        }]
+
     try:
-        msg = _build_message(contact["email"], subject, body)
-
-        with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=30) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(config.SMTP_USER, config.SMTP_PASSWORD)
-            server.send_message(msg)
-
-        logger.info(
-            f"✅ Sent → {contact['email']} | {contact.get('company','')} | "
-            f"Template {template_index} | via {config.SMTP_HOST}"
+        resp = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            json=payload,
+            headers={
+                "api-key":      api_key,
+                "Content-Type": "application/json",
+                "Accept":       "application/json",
+            },
+            timeout=30,
         )
-        return True, None, template_index
 
-    except smtplib.SMTPRecipientsRefused:
-        return False, "Invalid email address (refused by server)", template_index
-    except smtplib.SMTPAuthenticationError:
-        return False, f"SMTP auth failed — check SMTP_USER/SMTP_PASSWORD", template_index
-    except smtplib.SMTPException as exc:
-        return False, f"SMTP error: {exc}", template_index
+        if resp.status_code in (200, 201):
+            logger.info(
+                f"✅ Sent → {contact['email']} | {contact.get('company', '')} | "
+                f"Template {template_index} | via Brevo API"
+            )
+            return True, None, template_index
+        else:
+            error = resp.json().get("message", resp.text[:200])
+            logger.warning(f"❌ Brevo API error {resp.status_code}: {error}")
+            return False, f"Brevo API {resp.status_code}: {error}", template_index
+
+    except requests.exceptions.Timeout:
+        return False, "Brevo API request timed out", template_index
+    except requests.exceptions.ConnectionError as exc:
+        return False, f"Connection error: {exc}", template_index
     except Exception as exc:
         return False, f"Unexpected error: {exc}", template_index
-
 
 
 # ── Batch Sender ─────────────────────────────────────────────────────────────
@@ -165,7 +156,6 @@ def send_batch(batch_size: int = None) -> dict:
     """
     Send the next N pending emails with human-like delays.
     Thread-safe: only one batch runs at a time.
-    Returns a result dict suitable for JSON responses.
     """
     global _is_running
 
@@ -187,8 +177,8 @@ def _do_send_batch(batch_size: int) -> dict:
         logger.info("⏸️  Sending paused — skipping batch.")
         return {"status": "paused", "sent": 0, "failed": 0}
 
-    if not config.GMAIL_USER or not config.GMAIL_APP_PASSWORD:
-        logger.error("❌ GMAIL_USER or GMAIL_APP_PASSWORD not set in environment.")
+    if not config.BREVO_API_KEY:
+        logger.error("❌ BREVO_API_KEY not set in environment.")
         return {"status": "config_error", "sent": 0, "failed": 0}
 
     if batch_size is None:
