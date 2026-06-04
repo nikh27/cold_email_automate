@@ -1282,18 +1282,24 @@ td.company { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-
 
       <!-- Test Emails -->
       <div class="card control-card">
-        <div class="control-title">🧪 Test Emails</div>
-        <div class="control-desc">Send 3 test emails to yourself to verify everything looks good before the live run.</div>
+        <div class="control-title">🧪 Test Email</div>
+        <div class="control-desc">Send a test email to any address to verify everything looks good before the live run.</div>
         <div class="config-info" id="cfg-info" style="margin-bottom:14px; padding:10px 12px; border-radius:var(--r-sm); background:var(--glass2); font-size:.78rem; color:var(--text2);">
           Loading config…
         </div>
-        <button class="action-btn ab-test" onclick="sendTest()" style="width:100%;">
-          <span class="ab-icon">🧪</span>
-          <div class="ab-text">
-            <strong>Send 3 Test Emails</strong>
-            <span>Sent to your own Gmail inbox</span>
-          </div>
-        </button>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
+          <input
+            id="test-email-input"
+            type="email"
+            placeholder="Enter email address to test…"
+            style="flex:1;background:var(--glass2);border:1px solid var(--border2);border-radius:var(--r-sm);color:var(--text);font-family:inherit;font-size:.83rem;padding:9px 13px;outline:none;transition:border-color .18s;"
+            onfocus="this.style.borderColor='var(--purple)'"
+            onblur="this.style.borderColor='var(--border2)'"
+          />
+          <button class="btn btn-primary" onclick="sendTest()" style="white-space:nowrap;">
+            🧪 Send Test
+          </button>
+        </div>
         <div class="test-results" id="test-results" style="display:none;"></div>
       </div>
 
@@ -1632,18 +1638,24 @@ async function loadContacts(page = 1) {
       const tmpl = c.template_used !== null && c.template_used !== undefined
         ? `<span style="font-size:.7rem;color:var(--purple)">${TMPL_NAMES[c.template_used] || 'T'+c.template_used}</span>`
         : '—';
-      return `<tr>
+      const isSent    = c.status === 'sent';
+      const canSend   = !isSent;
+      const sendBtn   = isSent
+        ? `<button class="btn btn-sm" disabled style="opacity:.3;cursor:not-allowed;background:var(--glass2);color:var(--text3);border:1px solid var(--border);" title="Already sent">✓ Sent</button>`
+        : `<button class="btn btn-sm ${c.status==='failed'?'btn-danger':'btn-ghost'}" onclick="sendOne(${c.id}, this)" title="Manually send this email">📤 Send</button>`;
+      return `<tr id="contact-row-${c.id}">
         <td class="muted" style="font-size:.72rem;color:var(--text3)">${c.sno || c.id}</td>
         <td><strong style="font-size:.82rem">${esc(c.name||'—')}</strong></td>
         <td class="muted" style="font-size:.76rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.title||'—')}</td>
         <td class="company muted">${esc(c.company||'—')}</td>
         <td class="mono">${esc(c.email||'—')}</td>
-        <td><span class="badge badge-${c.status}">${
+        <td><span class="badge badge-${c.status}" id="badge-${c.id}">${
           c.status === 'sent'    ? '✓ Sent'    :
           c.status === 'failed'  ? '✗ Failed'  : '◷ Pending'
         }</span></td>
         <td>${tmpl}</td>
         <td class="mono" style="font-size:.7rem;color:var(--text3)">${fmtTime(c.sent_at)}</td>
+        <td>${sendBtn}</td>
       </tr>`;
     }).join('');
   }
@@ -1794,20 +1806,58 @@ async function triggerBatch(type) {
 }
 
 async function sendTest() {
-  toast('🧪 Sending 3 test emails…', 'info');
-  const d = await api('/api/test', { method: 'POST' });
+  const emailInput = document.getElementById('test-email-input');
+  const testEmail  = emailInput ? emailInput.value.trim() : '';
+
+  if (!testEmail) {
+    toast('⚠️ Please enter an email address first!', 'warning');
+    if (emailInput) emailInput.focus();
+    return;
+  }
+
+  toast(`🧪 Sending test email to ${testEmail}…`, 'info');
+  const d = await api('/api/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: testEmail })
+  });
   if (!d) return;
 
   const el = document.getElementById('test-results');
   el.style.display = 'flex';
-  el.innerHTML = d.results.map(r => `
-    <div class="test-result-item ${r.success ? 'ok' : 'fail'}">
-      ${r.success ? '✅' : '❌'} Template ${r.template + 1} — ${esc(r.company)} — ${r.success ? 'Delivered!' : esc(r.error || 'Failed')}
-    </div>
-  `).join('');
+  el.innerHTML = `<div class="test-result-item ${d.success ? 'ok' : 'fail'}">
+    ${d.success ? '✅' : '❌'} ${d.success ? `Delivered to ${esc(d.to)}!` : esc(d.error || 'Failed')}
+  </div>`;
 
-  const ok = d.results.filter(r => r.success).length;
-  toast(`${ok}/3 test emails sent! Check inbox.`, ok === 3 ? 'success' : 'warning');
+  toast(d.success ? `✅ Test email sent to ${d.to}!` : `❌ Failed: ${d.error}`, d.success ? 'success' : 'error');
+}
+
+async function sendOne(contactId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+  const d = await api('/api/send-one', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: contactId })
+  });
+
+  if (!d) {
+    if (btn) { btn.disabled = false; btn.textContent = '📤 Send'; }
+    return;
+  }
+
+  if (d.success) {
+    toast(`✅ Sent to ${d.email}!`, 'success');
+    const badge = document.getElementById(`badge-${contactId}`);
+    if (badge) { badge.className = 'badge badge-sent'; badge.textContent = '✓ Sent'; }
+    if (btn)   { btn.disabled = true; btn.textContent = '✓ Sent'; btn.style.opacity = '.3'; }
+  } else if (d.skipped) {
+    toast('⚠️ Already sent to this contact!', 'warning');
+    if (btn) { btn.disabled = true; btn.textContent = '✓ Sent'; btn.style.opacity = '.3'; }
+  } else {
+    toast(`❌ Failed: ${d.error}`, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '📤 Retry'; }
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
